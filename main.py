@@ -106,7 +106,7 @@ with st.sidebar:
     st.write("기본 데이터는 리포지토리에 포함된 CSV를 읽고, 업로드하면 업로드한 데이터로 자동 전환됩니다.")
     uploaded = st.file_uploader("같은 형식의 CSV 업로드", type=["csv"])
 
-    default_path = "ta_20260122174530-1.csv"  # 리포지토리에 이 이름으로 넣어두는 것을 권장
+    default_path = "ta_20260122174530.csv"  # 리포지토리에 이 이름으로 넣어두는 것을 권장
     st.caption(f"기본 파일 경로: {default_path} (없으면 앱이 오류를 냅니다)")
 
     st.header("비교 설정")
