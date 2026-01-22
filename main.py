@@ -27,50 +27,70 @@ def _find_header_line_index(lines: list[str]) -> int:
 
 def read_kma_csv(file_like_or_path) -> pd.DataFrame:
     """
-    Reads CSV that may include metadata lines on top.
-    Accepts: file path (str) or file-like (BytesIO/StringIO).
-    Returns cleaned dataframe with columns:
-      date, station, tavg, tmin, tmax, month, day, year
+    KMA-like CSVs (often cp949) with possible metadata rows.
+    Accepts: file path (str) or file-like (uploaded file).
     """
-    # Read raw text
+    # Read raw bytes
     if isinstance(file_like_or_path, str):
         with open(file_like_or_path, "rb") as f:
             raw = f.read()
     else:
         raw = file_like_or_path.read()
-        # reset pointer for potential re-reads
         try:
             file_like_or_path.seek(0)
         except Exception:
             pass
 
-    text = raw.decode("utf-8", errors="replace")
+    # ✅ Try common encodings (KMA csv often cp949)
+    text = None
+    last_err = None
+    for enc in ["utf-8-sig", "utf-8", "cp949", "euc-kr"]:
+        try:
+            text = raw.decode(enc)
+            break
+        except Exception as e:
+            last_err = e
+    if text is None:
+        raise ValueError(f"CSV 디코딩 실패: {last_err}")
+
     lines = text.splitlines()
     header_idx = _find_header_line_index(lines)
-
     if header_idx == -1:
-        raise ValueError("CSV에서 헤더(날짜/지점/평균기온/최저기온/최고기온)를 찾지 못했습니다. 형식을 확인해주세요.")
+        # 혹시 헤더는 있는데 일부 문구가 다른 경우를 대비해 첫 5줄 힌트 제공
+        preview = "\n".join(lines[:5])
+        raise ValueError(
+            "CSV에서 헤더(날짜/지점/평균기온/최저기온/최고기온)를 찾지 못했습니다.\n"
+            f"파일 상단 미리보기(5줄):\n{preview}"
+        )
 
     data_text = "\n".join(lines[header_idx:])
-
     df = pd.read_csv(io.StringIO(data_text))
 
-    # Normalize/rename
+    # ✅ Column normalization (allow slight variations)
+    df.columns = [str(c).strip().replace("\ufeff", "") for c in df.columns]
+    rename_map = {}
+    for c in df.columns:
+        if c == "평균기온" or ("평균" in c and "기온" in c):
+            rename_map[c] = "평균기온(℃)"
+        if c == "최저기온" or ("최저" in c and "기온" in c):
+            rename_map[c] = "최저기온(℃)"
+        if c == "최고기온" or ("최고" in c and "기온" in c):
+            rename_map[c] = "최고기온(℃)"
+    df = df.rename(columns=rename_map)
+
     expected = ["날짜", "지점", "평균기온(℃)", "최저기온(℃)", "최고기온(℃)"]
     missing = [c for c in expected if c not in df.columns]
     if missing:
-        raise ValueError(f"필수 컬럼이 없습니다: {missing}")
+        raise ValueError(f"필수 컬럼이 없습니다: {missing} / 현재 컬럼: {list(df.columns)}")
 
     df = df[expected].copy()
 
-    # Clean date strings (often includes tabs)
-    df["날짜"] = df["날짜"].astype(str).str.strip()
+    # Clean date strings (tabs etc.)
+    df["날짜"] = df["날짜"].astype(str).str.strip().str.replace("\t", "", regex=False)
 
-    # Parse dates
     df["date"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df.dropna(subset=["date"]).copy()
 
-    # Convert station & temps
     df["station"] = pd.to_numeric(df["지점"], errors="coerce")
     df["tavg"] = pd.to_numeric(df["평균기온(℃)"], errors="coerce")
     df["tmin"] = pd.to_numeric(df["최저기온(℃)"], errors="coerce")
@@ -80,11 +100,11 @@ def read_kma_csv(file_like_or_path) -> pd.DataFrame:
     df["month"] = df["date"].dt.month
     df["day"] = df["date"].dt.day
 
-    # Keep only station rows that exist
     df = df.dropna(subset=["station"]).copy()
     df["station"] = df["station"].astype(int)
 
     return df.sort_values("date").reset_index(drop=True)
+
 
 
 def pick_default_date(df: pd.DataFrame) -> date:
